@@ -1,0 +1,107 @@
+#!/bin/bash
+root=`dirname $0`
+root=`cd $root;pwd`
+test=${root// /\\ }
+if [ "$test" != "$root" ]; then 
+  echo "ERROR: Installer cannot run from a directory with spaces in the path. Please remove spaces from \"$root\", and try again."
+  exit 100
+fi
+
+
+export root
+workingDir=`dirname $0`
+. ${workingDir}/bin/setup-boot-loader.sh
+
+logName=`date +%Y-%m-%d_%H-%M-%S`
+
+if [ "${root/.xinstall/}" != "${root}" ]; then
+  echo "This is not a fresh install."
+  export LOG_FILE="${root}/xinstall.log"
+else
+  echo "This is a fresh install."
+  userHome=$HOME
+  if [ ! -d ${userHome} ]; then
+    userHome=`eval echo "~$USER"`
+  fi 
+  export LOG_FILE="${userHome}/.Xilinx/xinstall/xinstall-${logName}.log"
+  mkdir -p ${userHome}/.Xilinx/xinstall
+fi
+
+# ERROR out if this installation is running on 32 bit OS 
+# and does not support 32 bit installation 
+if [ "$(uname -m)" != "x86_64" ]; then
+    # check that the 32 bit library directory exist or not
+    lnx32LibDir="${workingDir}/lib/lnx32.o"
+    if [ ! -d $lnx32LibDir ]; then
+   	   # terminate with an ERROR
+       echo "ERROR: This installation is not supported on 32 bit platforms."
+       exit 1;
+    fi  
+fi
+
+# GUI Setup
+ARGS=${ARGS}\ --add-opens=java.base/java.nio=ALL-UNNAMED\ --add-opens=java.desktop/sun.swing=ALL-UNNAMED\ --add-opens=java.desktop/javax.swing=ALL-UNNAMED\ --add-opens=java.desktop/javax.swing.tree=ALL-UNNAMED\ --add-opens=java.desktop/sun.awt.X11=ALL-UNNAMED
+ARGS=${ARGS}\ -Dswing.aatext=true\ -Dswing.plaf.metal.controlFont=Tahoma\ -Dswing.plaf.metal.userFont=Tahoma\ -Dswing.boldMetal=false\ -Dawt.useSystemAAFontSettings=on
+if [[ ${DEBUG_ARGS} ]] ; then
+ echo "adding debug args: ${DEBUG_ARGS} to the ${ARGS}" 
+ ARGS=${DEBUG_ARGS}\ ${ARGS}
+fi
+ARGS=${ARGS}\ -DHAS_DYNAMIC_LANGUAGE_BUNDLE=true
+# if the argument -Uninstall was specified, run the Uninstaller
+if [ -n "${1}" ] 
+then
+  if [ ${1} = "-Uninstall" ]
+  then
+    echo "Launch Uninstaller..."
+    ARGS=${ARGS}\ -DINSTALLATION_MODE=Uninstall
+  fi
+fi
+
+if [ "${XBATCHTESTACTION}" == "Install" ]
+then
+  # Launch command line installer in test mode
+  echo "Running in test mode..." 
+  ${X_JAVA_HOME}/bin/java ${ARGS} -cp ${X_CLASS_PATH}:${root}/lib/classes/commons-cli-1.2.jar com.xilinx.installer.api.InstallerLauncher -b ${XBATCHTESTACTION} 
+ 
+else  
+
+  # Check if installation needs to be launched in batch mode.
+  X_BATCH=0
+  X_DEBUG=0
+  for var in "$@"
+  do
+    if [ "${var}" == "-b" -o "${var}" == "--batch" -o "${var}" == "-h" -o "${var}" == "--help" -o "${var}" == "-help" ]
+    then
+    X_BATCH=1
+    fi
+    if [ "${var}" == "-x" -o "${var}" == "--debug" ]
+    then
+      X_DEBUG=1
+    fi
+  done
+  if [ ${X_DEBUG} == 1 ] 
+  then
+    ARGS=-Dlogback.configurationFile=${root}/data/logback-debug.xml\ ${ARGS}
+  else
+    ARGS=-Dlogback.configurationFile=${root}/data/logback.xml\ ${ARGS} 
+  fi  
+  if [ ${X_BATCH} == 1 ]
+  then
+    echo "Running in batch mode..." 
+    ${X_JAVA_HOME}/bin/java ${ARGS} -cp ${X_CLASS_PATH} com.xilinx.installer.api.InstallerLauncher "$@" 
+    exitCode=$?
+  else
+    #${X_JAVA_HOME}/bin/java ${ARGS} -splash:${root}/data/images/splash.png -jar ${root}/lib/classes/xinstaller.jar
+	${X_JAVA_HOME}/bin/java ${ARGS} -cp ${X_CLASS_PATH} -splash:${root}/data/images/splash.png com.xilinx.installer.api.InstallerLauncher
+    exitCode=$?
+  fi
+fi
+
+
+###########################################################
+# setup-boot-loader.sh creates TMP_LD_LIBRARY_PATH which is 
+# used as java.io.tmpdir. delete the temp. directory once 
+# the java app is exited.
+###########################################################
+/bin/rm -rf ${TMP_LD_LIBRARY_PATH}
+exit $exitCode
